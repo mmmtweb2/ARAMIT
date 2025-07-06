@@ -1,0 +1,17 @@
+# תיקיות סביבה וירטואלית
+venv/
+env/
+node_modules/
+
+# קבצי הגדרות של IDE
+.idea/
+.vscode/
+
+# קבצים זמניים
+__pycache__/
+*.pyc
+.DS_Store
+
+# קבצי סביבה והגדרות אישיות
+.env
+.env.local
