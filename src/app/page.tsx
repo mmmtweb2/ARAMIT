@@ -1,103 +1,222 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/context/AuthContext';
+import { QuestionCard, Question, Answer } from '@/components/QuestionCard';
+import { GameStatus } from '@/components/GameStatus';
+import { GameOverScreen } from '@/components/GameOverScreen';
+import { MainMenu } from '@/components/MainMenu';
+import { Leaderboard } from '@/components/Leaderboard';
+import { SettingsScreen, Difficulty } from '@/components/SettingsScreen';
+import { getTitleForScore } from '@/utils/titles';
+
+const DURATION_MAPPING: Record<Difficulty, number> = {
+  easy: 10,
+  advanced: 5,
+};
+
+type View = 'menu' | 'game' | 'leaderboard' | 'settings';
+
+export default function HomePage() {
+  const { user, isLoading: isAuthLoading, updateCorrectAnswersCount } = useAuth();
+  const router = useRouter();
+
+  const [view, setView] = useState<View>('menu');
+  const [difficulty, setDifficulty] = useState<Difficulty>('advanced');
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [isQuestionsLoading, setIsQuestionsLoading] = useState(true);
+
+  const [gameState, setGameState] = useState({
+    currentQuestionIndex: 0,
+    lives: 3,
+    score: 0,
+    isGameOver: false,
+  });
+  const [selectedAnswer, setSelectedAnswer] = useState<Answer | null>(null);
+  const [timeLeft, setTimeLeft] = useState(DURATION_MAPPING[difficulty]);
+  const [showTitleUpgrade, setShowTitleUpgrade] = useState(false);
+  const [newTitle, setNewTitle] = useState<string | null>(null);
+
+  const currentQuestion = questions[gameState.currentQuestionIndex];
+
+  // הוספנו את הקוד הזה כדי להדפיס את נתוני השאלה הנוכחית לקונסולה
+  useEffect(() => {
+    if (currentQuestion) {
+      console.log("בדיקה ודאית: נתוני השאלה בקליינט:", currentQuestion);
+    }
+  }, [currentQuestion]);
+
+
+  // useEffect לבדיקת אימות והפניה
+  useEffect(() => {
+    if (!isAuthLoading && !user) {
+      router.push('/auth');
+    }
+  }, [user, isAuthLoading, router]);
+
+  // useEffect לשליפת שאלות מהשרת
+  useEffect(() => {
+    if (user) {
+      const fetchQuestions = async () => {
+        setIsQuestionsLoading(true);
+        try {
+          const response = await fetch('http://localhost:5001/questions');
+          const data = await response.json();
+          setQuestions(data);
+        } catch (error) {
+          console.error("Failed to fetch questions:", error);
+        } finally {
+          setIsQuestionsLoading(false);
+        }
+      };
+      fetchQuestions();
+    }
+  }, [user]);
+
+  // useEffect לניהול הטיימר
+  useEffect(() => {
+    if (view !== 'game' || selectedAnswer || gameState.isGameOver || isQuestionsLoading) return;
+    if (timeLeft === 0) {
+      handleAnswerClick({ text: 'Time is up', isCorrect: false });
+      return;
+    }
+    const timerId = setInterval(() => setTimeLeft(t => t - 1), 1000);
+    return () => clearInterval(timerId);
+  }, [timeLeft, selectedAnswer, gameState.isGameOver, view, isQuestionsLoading]);
+
+  const moveToNextQuestion = () => {
+    const nextQuestionIndex = gameState.currentQuestionIndex + 1;
+    if (nextQuestionIndex < questions.length) {
+      setGameState(prev => ({ ...prev, currentQuestionIndex: nextQuestionIndex }));
+      setSelectedAnswer(null);
+      setTimeLeft(DURATION_MAPPING[difficulty]);
+    } else {
+      setGameState(prev => ({ ...prev, isGameOver: true }));
+    }
+  };
+
+  const handleAnswerClick = (answer: Answer) => {
+    if (selectedAnswer) return;
+    setSelectedAnswer(answer);
+    let currentScore = gameState.score;
+    let currentLives = gameState.lives;
+    if (answer.isCorrect) {
+      currentScore += 1;
+    } else {
+      currentLives -= 1;
+    }
+    setGameState(prev => ({ ...prev, score: currentScore, lives: currentLives }));
+    if (currentLives === 0) {
+      setGameState(prev => ({ ...prev, isGameOver: true }));
+      return;
+    }
+    setTimeout(moveToNextQuestion, 1500);
+  };
+
+  const startGame = () => {
+    if (isQuestionsLoading || questions.length === 0) {
+      alert("עדיין טוען שאלות מהשרת, נסה שוב בעוד רגע");
+      return;
+    }
+    setGameState({ currentQuestionIndex: 0, lives: 3, score: 0, isGameOver: false });
+    setSelectedAnswer(null);
+    setTimeLeft(DURATION_MAPPING[difficulty]);
+    setView('game');
+  };
+
+  // useEffect לשליחת הניקוד בסוף המשחק
+  useEffect(() => {
+    if (gameState.isGameOver && user && gameState.score > 0) {
+      const submitScore = async () => {
+        try {
+          await fetch('http://localhost:5001/scores/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: user.id,
+              username: user.username,
+              score: gameState.score
+            })
+          });
+          // עדכון כמות התשובות הנכונות במצטבר
+          const res = await fetch('http://localhost:5001/users/increment-correct-answers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: user.id,
+              correctAnswersIncrement: gameState.score
+            })
+          });
+          const data = await res.json();
+          if (data && typeof data.correctAnswersCount === 'number') {
+            if (user.correctAnswersCount !== undefined) {
+              const prevTitle = getTitleForScore(user.correctAnswersCount);
+              const nextTitle = getTitleForScore(data.correctAnswersCount);
+              if (prevTitle !== nextTitle && nextTitle) {
+                setShowTitleUpgrade(true);
+                setNewTitle(nextTitle);
+              }
+            }
+            updateCorrectAnswersCount(data.correctAnswersCount);
+          }
+        } catch (error) {
+          console.error("Failed to submit score or update correct answers:", error);
+        }
+      };
+      submitScore();
+    }
+  }, [gameState.isGameOver, user, gameState.score]);
+
+  const resetAndGoToMenu = () => {
+    setGameState({ currentQuestionIndex: 0, lives: 3, score: 0, isGameOver: false });
+    setSelectedAnswer(null);
+    setTimeLeft(DURATION_MAPPING[difficulty]);
+    setView('menu');
+  };
+
+  if (isAuthLoading || !user) {
+    return <div className="min-h-screen flex items-center justify-center text-white bg-background">טוען...</div>;
+  }
+
+  const renderView = () => {
+    if (isQuestionsLoading && view === 'game') {
+      return <div className="text-white text-2xl">טוען שאלות מהשרת...</div>;
+    }
+    switch (view) {
+      case 'menu':
+        return <MainMenu onStartGame={startGame} onShowLeaderboard={() => setView('leaderboard')} onShowSettings={() => setView('settings')} />;
+      case 'leaderboard':
+        return <Leaderboard onBackToMenu={() => setView('menu')} />;
+      case 'settings':
+        return <SettingsScreen currentDifficulty={difficulty} onSetDifficulty={setDifficulty} onBackToMenu={() => setView('menu')} />;
+      case 'game':
+        if (gameState.isGameOver) {
+          return <GameOverScreen score={gameState.score} onPlayAgain={startGame} onBackToMenu={resetAndGoToMenu} />;
+        }
+        return (
+          <div className="relative w-full flex flex-col items-center">
+            <GameStatus lives={gameState.lives} score={gameState.score} timeLeft={timeLeft} totalTime={DURATION_MAPPING[difficulty]} />
+            {currentQuestion && (
+              <QuestionCard
+                question={currentQuestion}
+                selectedAnswer={selectedAnswer}
+                onAnswerClick={handleAnswerClick}
+              />
+            )}
+          </div>
+        );
+    }
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <main className="flex flex-col items-center justify-center min-h-screen p-4">
+      {showTitleUpgrade && newTitle && (
+        <div className="fixed top-10 right-1/2 translate-x-1/2 bg-green-700 text-white px-6 py-3 rounded-lg shadow-lg z-50 text-2xl font-bold">
+          מזל טוב! עלית לתואר: {newTitle}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      )}
+      {renderView()}
+    </main>
   );
 }

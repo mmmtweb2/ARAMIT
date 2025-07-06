@@ -1,26 +1,34 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+.gradient-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    transition: opacity 1s ease-in-out;
+    opacity: 0;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+.gradient-background.visible {
+    opacity: 1;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+.gradient-default {
+    background: radial-gradient(circle, #1a1a4a 0%, #0d0c32 100%);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.gradient-warm {
+    background: radial-gradient(circle, #5e3a5a 0%, #3b1f3b 100%);
+}
+
+.gradient-cool {
+    background: radial-gradient(circle, #2a5298 0%, #1e3c72 100%);
+}
+
+.gradient-success {
+    background: radial-gradient(circle, #1e5641 0%, #0d3d2b 100%);
 }
